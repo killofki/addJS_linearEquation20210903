@@ -148,6 +148,7 @@ bool ParseMulDiv(ParseContext& context, Equation& result) {
 		const double exp = context.Required == '*' ? 1 : -1;
 		Equation rhs;
 		if (!ParseParen(context, rhs)) return false;
+		else if (exp == 1 && result.Coefficient != 0 && rhs.Coefficient != 0) return Error(context.Offset - 1, "곱셈의 결과가 일차식이 아닙니다.");
 		else if (exp == -1 && rhs.Coefficient == 0 && rhs.Constant == 0) return Error(context.Offset - 1, "0으로 나눌 수 없습니다.");
 
 		if (exp == -1 && rhs.Coefficient != 0) {
