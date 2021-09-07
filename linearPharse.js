@@ -44,6 +44,8 @@ let g_InputMessage
 	= getMessageReceiver 
 		`x에 대한 일차방정식을 입력하세요: ( 취소 : ESC / Cancel ) ` 
 
+let debugging // = true 
+
 consoleTemplate `
 일차방정식 계산 프로그램 
 (C) 2021. kmc7468 All rights reserved. 
@@ -68,7 +70,12 @@ startPoint : while( true ) {
 		break startPoint 
 		} // -- if isBreak 
 	
-	let result = ParseEquation( equation )
+	let result 
+	try { result = ParseEquation( equation ) } 
+	catch( err ) { 
+		console .error( err ) 
+		} // -- catch 
+	
 	if ( ! ( result instanceof Equation ) ) { 
 		// maybe was error message 
 		continue startPoint 
@@ -121,27 +128,34 @@ function ParseEquation( equation ) {
 			return false 
 		
 		case ! requireOn `=` : 
-			return ErrorLPAt( context .Offset ) 
-				`등호가 없습니다.` 
+			ErrorAt( context .Offset ) 
+			throw `등호가 없습니다.` 
 		
 		case ! ParseAddSub( context, rhs ) : 
 			return false 
 		
 		case context .Offset < equation .length : 
-			return ErrorLPAt( context .Offset ) 
-				`올바른 형식의 일차방정식이 아닙니다.` 
+			ErrorAt( context .Offset ) 
+			throw `올바른 형식의 일차방정식이 아닙니다.` 
 		
 		} // -- switch true 
 	
+	// equaling 
 	let { Coefficient, Constant } = propMinus( lhs, rhs ) 
 	Constant = -1 * Constant // rhs - lhs 
 	let result = new Equation({ Coefficient, Constant }) 
+	
+	debugging 
+		&& consoleTemplate `${ Coefficient }x = ${ Constant } // ParseEquation` 
 	
 	return result 
 	} // -- ParseEquation() 
 
 function SolveEquation( equation ) { 
 	let { Coefficient, Constant } = equation 
+	debugging 
+		&& consoleTemplate `${ Coefficient }x = ${ Constant } // SolveEquation` 
+	
 	return ( 
 		Coefficient === 0 
 			? Constant === 0 ? Infinity : NaN 
@@ -150,7 +164,7 @@ function SolveEquation( equation ) {
 	} // -- SolveEquation() 
 
 function SkipEmptyChars( context ) { 
-	let matcher = /\s+/g 
+	let matcher = /\s+/gy 
 	let { Offset, Equation } = context 
 	
 	matcher .lastIndex = Offset 
@@ -205,25 +219,6 @@ function ErrorAt( offset ) {
 	consoleTemplate `${ space }^` 
 	} // -- ErrorAt() 
 
-function ErrorLPAt( offset ) { 
-	return ( ... ar ) => { 
-		let reason = rawValue( ... ar ) 
-		ErrorAt( offset ) 
-		consoleTemplate `오류: ${ reason }` 
-		consoleTemplate `` 
-	
-		return false 
-		} // -- () // -- return 
-	} // -- ErrorLPAt() 
-
-function ErrorLP( offset, reason ) { 
-	ErrorAt( offset ) 
-	consoleTemplate `오류: ${ reason }` 
-	consoleTemplate `` 
-	
-	return false 
-	} // -- ErrorLP() 
-
 function ParseAddSub( context, result ) { 
 	if ( ! ParseMulDiv( context, result ) ) { 
 		return false 
@@ -241,11 +236,40 @@ function ParseAddSub( context, result ) {
 		let signRhs = multiplyToProp( rhs, sign ) // lazy 
 		let { Coefficient, Constant } = propPlus( signRhs, result ) // calling 
 		
+		debugging 
+			&& consoleTemplate 
+				`${ Coefficient }x + ${ Constant } // ParseAddSub` 
+		
 		Object .assign( result, { Coefficient, Constant } ) 
 		} // -- while RequireCharsOn +- 
 	
 	return true 
 	} // -- ParseAddSub() 
+
+function checkDivide({ exp, rhs, context }) { 
+	if ( exp !== -1 ) 
+		{ return } 
+	
+	if ( rhs .Coefficient !== 0 ) { 
+		ErrorAt( context .Offset - 1 ) 
+		throw `일차식으로 나눌 수 없습니다.`  
+		} // -- if !== 0 
+		
+	if ( rhs .Constant === 0 ) { 
+		ErrorAt( context .Offset - 1 ) 
+		throw `0으로 나눌 수 없습니다.` 
+		} // -- if === 0 
+	} // -- checkDivide() 
+
+function checkMulDiv({ rhs, result, context }) { 
+	if 
+			(  rhs .Coefficient != 0 
+			&& result .Coefficient != 0 
+			) { 
+		ErrorAt( context .Offset - 1 ) 
+		throw `곱셈/나눗셈의 결과가 일차식이 아닙니다.` 
+		} // -- if != 0 
+	} // -- checkMulDiv() 
 
 function ParseMulDiv( context, result ) { 
 	if ( ! ParseParen( context, result ) ) { 
@@ -261,54 +285,27 @@ function ParseMulDiv( context, result ) {
 		if ( ! ParseParen( context, rhs ) ) { 
 			return false 
 			} // -- if ! ParseParen 
-		if 
-				(  exp === -1 
-				&& rhs .Coefficient === 0 
-				&& rhs .Constant === 0 
-				) { 
-			return ErrorLPAt( context .Offset - 1 ) 
-				`0으로 나눌 수 없습니다.` 
-			} // -- else === -1 
 		
-		if 
-				(  rhs .Coefficient != 0 
-				&& result .Coefficient != 0 
-				) { 
-			checkRoot : { 
-				const denRoot = - result .Constant / result .Coefficient 
-				const numRem = rhs .Coefficient * denRoot + rhs .Constant 
-				if ( numRem != 0 ) { 
-					return ErrorLPAt( context .Offset - 1 ) 
-						`곱셈/나눗셈의 결과가 일차식이 아닙니다.` 
-					} // -- if != 0 
-				} // -- checkRoot 
-			
-			let { Coefficient } = propDivide( result, rhs ) // 일차식/일차식 
-			result .Constant = Coefficient 
-			result .Coefficient = 0 
-			continue inMultiply 
-			} // -- if === -1 
+		checkDivide({ exp, rhs, context }) 
+		checkMulDiv({ result, rhs, context }) 
 		
-		if 
-				(  result .Coefficient === 0 
-				&& rhs .Coefficient === 0 
-				) { // 상수항*상수항 
-			exp > 0 
-				? ( result .Constant *= rhs .Constant ) 
-				: ( result .Constant /= rhs .Constant ) 
-			} // if 0 
-		else if ( result .Coefficient === 0 ) { 
-			let { Coefficient, Constant } 
-				= multiplyToProp( rhs, result .Constant ) 
-			Object .assign( result, { Coefficient, Constant } ) 
-			} // -- else === 0 
-		else { // 일차식*상수항 
-			let { Coefficient, Constant } 
-				= exp > 0 
-					? multiplyToProp( result, rhs .Constant ) 
-					: divideToProp( result, rhs .Constant ) 
-			Object .assign( result, { Coefficient, Constant } ) 
-			} // 0 else 
+		let [ singleOrder, constOrder ] 
+			= result .Coefficient === 0 && exp === 1 
+				? [ rhs, result ] 
+				: [ result, rhs ] 
+					// rhs have no Coefficient when exp <- -1 
+					// by checkDivide 
+		
+		let { Coefficient, Constant } 
+			= exp > 0 
+				? multiplyToProp( singleOrder, constOrder .Constant ) 
+				: divideToProp( singleOrder, constOrder .Constant ) 
+		
+		debugging 
+			&& consoleTemplate 
+				`${ Coefficient }x + ${ Constant } // continue < ParseMulDiv` 
+		
+		Object .assign( result, { Coefficient, Constant } ) 
 		
 		continue inMultiply 
 		} // -- while requiresOn 
@@ -327,55 +324,48 @@ function ParseParen( context, result ) {
 		) // -- return 
 	} // -- ParseParen() 
 
-function ParseTerm( context, result ) { 
+function matchingNumberXAt( context ) { 
+	let matching 
+		= /\s*(?<signChars>[+-]+)?\s*(?=[\dx])(?<numberString>\d+(\.\d+)?)?\s*(?<X>x)?/gy 
+	matching .lastIndex = context .Offset 
+	
+	let matched = matching .exec( context .Equation ) 
+	if ( ! matched ) { 
+		ErrorAt( context .Offset ) 
+		throw `올바른 형식의 일차방정식이 아닙니다.` 
+		} // -- if ! matched 
+	
+	context .Offset = matching .lastIndex 
+	let { signChars = '', numberString = 1, X } = matched . groups 
 	let sign = 1 
-	let requiresOn = RequireCharsOn( context ) 
 	
-	while ( requiresOn `+-` ) { 
-		sign *= context .Required === '+' ? 1 : -1 
-		} // -- while requiresOn +- 
+	for ( let signChar of signChars ) { 
+		sign *= signChar === '+' ? 1 : -1 
+		} // -- for of signs 
 	
-	let { Equation } = context // here Equation is string 
+	let number = sign * numberString 
 	
-	SkipEmptyChars( context ) 
-	if ( context .Offset >= Equation .length ) { 
-		return ErrorLPAt( context .Offset ) 
-			`올바른 형식의 일차방정식이 아닙니다.` 
-		} // -- if === length 
+	return { X, number } 
+	} // -- matchingNumberAt() 
+
+function ParseTerm( context, result ) { 
+	let { X, number } = matchingNumberXAt( context ) 
 	
-	let headChar = Equation[ context .Offset ] 
-	if ( /\d/ .test( headChar ) ) { 
-		let matching = /\d+(\.\d+)?/g 
-		matching .lastIndex = context .Offset 
+	if ( X ) { 
+		debugging 
+			&& consoleTemplate `${ number }x // ParseTerm` 
 		
-		let [ numberString ] = matching .exec( Equation ) 
-		let number = sign * numberString 
-		let distance = matching .lastIndex 
-		context .Offset = distance 
-		
-		if 
-				(  distance < Equation .length 
-				&& Equation[ distance ] === 'x' 
-				) { 
-			result .Coefficient = number 
-			context .Offset += 1 
-			} // -- if === x 
-		else { 
-			result .Constant = number 
-			} // -- x else 
+		result .Coefficient = number 
 		
 		return true 
-		} // -- if \d 
+		} // -- if X 
 	
-	if ( Equation[ context .Offset ] === 'x' ) { 
-		result .Coefficient = sign 
-		context .Offset += 1 
-		
-		return true 
-		} // -- else if x 
+	debugging 
+		&& consoleTemplate `${ number } // ParseTerm` 
 	
-	return ErrorLPAt( context .Offset ) 
-		`올바른 형식의 일차방정식이 아닙니다.` 
+	result .Constant = number 
+	
+	return true 
 	} // -- ParseTerm() 
 
 function propPlus( left, right ) { 
@@ -390,18 +380,6 @@ function propMinus( left, right ) {
 	return new Proxy( {}, { get } ) 
 	} // -- propMinus() 
 
-function propMultiply( left, right ) { 
-	let get = ( t, prop ) => left[ prop ] * right[ prop ] 
-	
-	return new Proxy( {}, { get } ) 
-	} // -- propMultiply() 
-
-function propDivide( left, right ) { 
-	let get = ( t, prop ) => left[ prop ] / right[ prop ] 
-	
-	return new Proxy( {}, { get } ) 
-	} // -- propDivide() 
-
 function multiplyToProp( obj, multTime ) { 
 	let get = ( t, prop ) => obj[ prop ] * multTime 
 	
@@ -413,19 +391,6 @@ function divideToProp( obj, multTime ) {
 	
 	return new Proxy( {}, { get } ) 
 	} // -- divideToProp() 
-
-function escapeC( c ) { 
-	return escape( c ) 
-		.replace( /[+*]/g, c => `%${ c .codePointAt() .toString `16` }` ) 
-	} // -- escapeC() 
-
-function searcherC( c ) { 
-	let searchOrder = escapeC( c ) 
-		.replace( /%(u?)/g, ( m, isU ) => isU ? `\\u` : `\\x` ) 
-	let searcher = RegExp( searchOrder, 'g' ) 
-	
-	return searcher 
-	} // -- searcherC() 
 
 function getMessageReceiver( ... ar ) { 
 	let order = rawValue( ... ar ) 
