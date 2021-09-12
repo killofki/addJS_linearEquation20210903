@@ -164,15 +164,10 @@ function SolveEquation( equation ) {
 	} // -- SolveEquation() 
 
 function SkipEmptyChars( context ) { 
-	let matcher = /\s+/gy 
-	let { Offset, Equation } = context 
+	SkipEmptyChars 
+		= matcherRail( /\s+/gy ) // lazy 
 	
-	matcher .lastIndex = Offset 
-	let matched = matcher .exec( Equation ) 
-	
-	if ( matched ?.index === Offset ) { 
-		context .Offset = matcher .lastIndex 
-		} // -- if matched 
+	return SkipEmptyChars( context ) // call 
 	} // -- SkipEmptyChars() 
 
 function RequireCharsOn( context ) { 
@@ -226,7 +221,7 @@ function ParseAddSub( context, result ) {
 	
 	let requiresOn = RequireCharsOn( context ) 
 	
-	while ( requiresOn `+-` ) { 
+	inSumSub : while ( requiresOn `+-` ) { 
 		const sign = context .Required === '+' ? 1 : -1 
 		let rhs = new Equation 
 		if ( ! ParseMulDiv( context, rhs ) ) { 
@@ -241,35 +236,10 @@ function ParseAddSub( context, result ) {
 				`${ Coefficient }x + ${ Constant } // ParseAddSub` 
 		
 		Object .assign( result, { Coefficient, Constant } ) 
-		} // -- while RequireCharsOn +- 
+		} // -- while RequireCharsOn +- // -- inSumSub 
 	
 	return true 
 	} // -- ParseAddSub() 
-
-function checkDivide({ exp, rhs, context }) { 
-	if ( exp !== -1 ) 
-		{ return } 
-	
-	if ( rhs .Coefficient !== 0 ) { 
-		ErrorAt( context .Offset - 1 ) 
-		throw `일차식으로 나눌 수 없습니다.`  
-		} // -- if !== 0 
-		
-	if ( rhs .Constant === 0 ) { 
-		ErrorAt( context .Offset - 1 ) 
-		throw `0으로 나눌 수 없습니다.` 
-		} // -- if === 0 
-	} // -- checkDivide() 
-
-function checkMulDiv({ rhs, result, context }) { 
-	if 
-			(  rhs .Coefficient != 0 
-			&& result .Coefficient != 0 
-			) { 
-		ErrorAt( context .Offset - 1 ) 
-		throw `곱셈/나눗셈의 결과가 일차식이 아닙니다.` 
-		} // -- if != 0 
-	} // -- checkMulDiv() 
 
 function ParseMulDiv( context, result ) { 
 	if ( ! ParseParen( context, result ) ) { 
@@ -279,27 +249,30 @@ function ParseMulDiv( context, result ) {
 	let requiresOn = RequireCharsOn( context ) 
 	
 	inMultiply : while ( requiresOn `*/` ) { 
-		const exp = context .Required === '*' ? 1 : -1 
+		const mulTo 
+			= context .Required === '*' ? multiplyToProp 
+			: divideToProp 
 		
 		let rhs = new Equation 
 		if ( ! ParseParen( context, rhs ) ) { 
 			return false 
 			} // -- if ! ParseParen 
 		
-		checkDivide({ exp, rhs, context }) 
+		checkDivide({ mulTo, rhs, context }) 
 		checkMulDiv({ result, rhs, context }) 
 		
+		let resultNoCoefficient 
+			=  result .Coefficient === 0 
+			&& mulTo === multiplyToProp 
+		
 		let [ singleOrder, constOrder ] 
-			= result .Coefficient === 0 && exp === 1 
-				? [ rhs, result ] 
-				: [ result, rhs ] 
-					// rhs have no Coefficient when exp <- -1 
-					// by checkDivide 
+			=  resultNoCoefficient ? [ rhs, result ] 
+			: [ result, rhs ] 
+				// rhs have no Coefficient when mulTo <- divideToProp 
+				// by checkDivide 
 		
 		let { Coefficient, Constant } 
-			= exp > 0 
-				? multiplyToProp( singleOrder, constOrder .Constant ) 
-				: divideToProp( singleOrder, constOrder .Constant ) 
+			= mulTo( singleOrder, constOrder .Constant ) 
 		
 		debugging 
 			&& consoleTemplate 
@@ -316,37 +289,51 @@ function ParseMulDiv( context, result ) {
 function ParseParen( context, result ) { 
 	let requireOn = RequireCharOn( context ) 
 	
-	return ( 
-		requireOn `(` 
+	let getSigned = RequireCharsOn( context ) `+-` // receive just single sign 
+	let preSign = getSigned ? context .Required : '' 
+	
+	let parenReceived 
+		= requireOn `(` 
 			?  ParseAddSub( context, result ) 
 			&& requireOn `)` 
 		: ParseTerm( context, result ) 
-		) // -- return 
+	
+	if ( preSign === '-' ) { 
+		let { Coefficient, Constant } = multiplyToProp( result, -1 ) 
+		debugging 
+			&& consoleTemplate 
+				`${ Coefficient }x + ${ Constant } // ParseAddSub` 
+		
+		Object .assign( result, { Coefficient, Constant } ) 
+		} // -- preOperator 
+	
+	return parenReceived 
 	} // -- ParseParen() 
 
-function matchingNumberXAt( context ) { 
-	let matching 
-		= /\s*(?<signChars>[+-]+)?\s*(?=[\dx])(?<numberString>\d+(\.\d+)?)?\s*(?<X>x)?/gy 
-	matching .lastIndex = context .Offset 
+function checkDivide({ mulTo, rhs, context }) { 
+	if ( mulTo !== divideToProp ) 
+		{ return } 
 	
-	let matched = matching .exec( context .Equation ) 
-	if ( ! matched ) { 
-		ErrorAt( context .Offset ) 
-		throw `올바른 형식의 일차방정식이 아닙니다.` 
-		} // -- if ! matched 
-	
-	context .Offset = matching .lastIndex 
-	let { signChars = '', numberString = 1, X } = matched . groups 
-	let sign = 1 
-	
-	for ( let signChar of signChars ) { 
-		sign *= signChar === '+' ? 1 : -1 
-		} // -- for of signs 
-	
-	let number = sign * numberString 
-	
-	return { X, number } 
-	} // -- matchingNumberAt() 
+	if ( rhs .Coefficient !== 0 ) { 
+		ErrorAt( context .Offset - 1 ) 
+		throw `일차식으로 나눌 수 없습니다.`  
+		} // -- if !== 0 
+		
+	if ( rhs .Constant === 0 ) { 
+		ErrorAt( context .Offset - 1 ) 
+		throw `0으로 나눌 수 없습니다.` 
+		} // -- if === 0 
+	} // -- checkDivide() 
+
+function checkMulDiv({ rhs, result, context }) { 
+	let isNotSingleMul 
+		=  rhs .Coefficient != 0 
+		&& result .Coefficient != 0 
+	if ( isNotSingleMul ) { 
+		ErrorAt( context .Offset - 1 ) 
+		throw `곱셈/나눗셈의 결과가 일차식이 아닙니다.` 
+		} // -- if != 0 
+	} // -- checkMulDiv() 
 
 function ParseTerm( context, result ) { 
 	let { X, number } = matchingNumberXAt( context ) 
@@ -367,6 +354,56 @@ function ParseTerm( context, result ) {
 	
 	return true 
 	} // -- ParseTerm() 
+
+function matchingNumberXAt( context ) { 
+	let { Offset } = context 
+	
+	let matchingSign 
+		= matcherRail( /\s*(?<signChars>[+-]+)/gy ) 
+	let matchingNumberString 
+		= matcherRail( /\s*(?<numberString>\d+(\.\d+)?)/gy ) 
+	let matchingX 
+		= matcherRail( /\s*(?<X>x)/gy ) 
+	
+	let { signChars = '' } = matchingSign( context ) ?.groups ?? {} 
+	let { numberString } = matchingNumberString( context ) ?.groups ?? {} 
+	let { X } = matchingX( context ) ?. groups ?? {} 
+	
+	let foundNumberX = numberString ?? X 
+	if ( ! foundNumberX ) { 
+		ErrorAt( Offset ) 
+		throw `올바른 형식의 일차방정식이 아닙니다.` 
+		} // -- if ! foundNumberX 
+	
+	numberString ??= '1' 
+	
+	let sign = 1 
+	for ( let signChar of signChars ) { 
+		sign *= `${ signChar }1` 
+		} // -- for of signs 
+	
+	let number = sign * numberString 
+	
+	return { X, number } 
+	} // -- matchingNumberXAt() 
+
+function matcherRail( matcher ) { // must /()/gy 
+	let railBody = 
+		function getNext( context ) { 
+			let { Offset, Equation } = context 
+			
+			matcher .lastIndex = Offset 
+			let matched = matcher .exec( Equation ) 
+			
+			if ( matched ?.index === Offset ) { 
+				context .Offset = matcher .lastIndex 
+				
+				return matched 
+				} // -- if matched 
+			} // -- getNext() 
+	
+	return railBody 
+	} // -- matcherRail() 
 
 function propPlus( left, right ) { 
 	let get = ( t, prop ) => left[ prop ] + right[ prop ] 
